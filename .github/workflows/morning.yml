@@ -1,0 +1,12 @@
+name: morning-plan
+on:
+  schedule: [ { cron: "30 13 * * 1-5" } ]
+  workflow_dispatch: {}
+jobs:
+  call:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger morning plan on Vercel
+        run: |
+          curl -sS -X POST "${{ secrets.SCHEDULE_URL }}" \
+            -H "Authorization: Bearer ${{ secrets.SCHEDULE_TOKEN }}"
