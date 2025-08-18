@@ -1,0 +1,32 @@
+name: Coach Schedule
+on:
+  schedule:
+    - cron: '30 13 * * 1-5'   # 7:30 AM Denver during DST (approx Aug)
+  workflow_dispatch: {}
+
+jobs:
+  morning:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post Morning Plan
+        run: |
+          curl -sS -X POST "${{ secrets.SCHEDULE_URL_MORNING }}" \
+            -H "Authorization: Bearer ${{ secrets.SCHEDULE_TOKEN }}"
+  monday_plan:
+    if: ${{ startsWith(github.event.schedule, '30 13') && contains(fromJson('["Mon"]'), format('{0:ddd}', github.event.schedule)) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Plan Sprint (Mondays)
+        run: |
+          curl -sS -X POST "${{ secrets.SCHEDULE_URL_PLAN }}" \
+            -H "Authorization: Bearer ${{ secrets.SCHEDULE_TOKEN }}"
+  friday_review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sprint Review prompt (Fridays 5:30pm Denver)
+        run: |
+          # 5:30pm Denver ~ 23:30 UTC during DST
+          if [ "$(date -u +%u)" = "5" ] && [ "$(date -u +%H:%M)" = "23:30" ]; then
+            curl -sS -X POST "${{ secrets.SCHEDULE_URL_REVIEW }}" \
+              -H "Authorization: Bearer ${{ secrets.SCHEDULE_TOKEN }}"
+          fi

@@ -68,6 +68,59 @@ export async function POST(req: NextRequest) {
   // const channelId = params.get("channel_id") || "";
   // const responseUrl = params.get("response_url") || "";
 
+    // --- /coach ---
+    if (command === "/coach") {
+      const sub = text.split(/\s+/)[0] || "";
+  
+      const base = process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : process.env.LOCAL_BASE_URL || "http://localhost:3000";
+      const token = process.env.SCHEDULE_TOKEN || "";
+  
+      if (sub === "plan") {
+        // triggers weekly sprint planning immediately
+        await fetch(`${base}/api/coach/plan`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        return NextResponse.json({
+          response_type: "ephemeral",
+          text: "Planning sprint now… check the channel for the plan.",
+        });
+      }
+  
+      if (sub === "today") {
+        // re-posts today's plan now (same as the 7:30 job)
+        await fetch(`${base}/api/schedule/morning`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        return NextResponse.json({
+          response_type: "ephemeral",
+          text: "Posting today's plan… check the channel.",
+        });
+      }
+  
+      if (sub === "review") {
+        // posts the sprint review prompt
+        await fetch(`${base}/api/coach/review`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        return NextResponse.json({
+          response_type: "ephemeral",
+          text: "Posting sprint review prompt… check the channel.",
+        });
+      }
+  
+      // help
+      return NextResponse.json({
+        response_type: "ephemeral",
+        text: "Usage: `/coach plan` | `/coach today` | `/coach review`",
+      });
+    }
+  
+
   // --- /today ---
   if (command === "/today") {
     const teamId = process.env.LINEAR_TEAM_ID;
