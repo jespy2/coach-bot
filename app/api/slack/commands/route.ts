@@ -90,14 +90,25 @@ export async function POST(req: NextRequest) {
       }
   
       if (sub === "today") {
-        // re-posts today's plan now (same as the 7:30 job)
+        // 1) Fetch the list directly so we can show it to you immediately
+        const teamId = process.env.LINEAR_TEAM_ID!;
+        const issues = await fetchTodayTasks(teamId) as TodayIssue[];
+    
+        // 2) Build blocks for both ephemeral reply and channel post
+        const blocks = toTodayBlocks(issues);
+    
+        // 3) Fire-and-forget channel post via our existing endpoint (optional)
+        // (If this fails, at least you saw the ephemeral list.)
         await fetch(`${base}/api/schedule/morning`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
-        });
+        }).catch(() => { /* ignore */ });
+    
+        // 4) Show the checklist in your Slack client now
         return NextResponse.json({
           response_type: "ephemeral",
-          text: "Posting today's plan… check the channel.",
+          text: issues.length ? "Here’s your plan for today:" : "No open tasks due today.",
+          blocks,
         });
       }
   
