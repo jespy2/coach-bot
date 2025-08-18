@@ -76,16 +76,42 @@ export async function POST(req: NextRequest) {
         ? `https://${process.env.VERCEL_URL}`
         : process.env.LOCAL_BASE_URL || "http://localhost:3000";
       const token = process.env.SCHEDULE_TOKEN || "";
+      const channel = process.env.SLACK_DEFAULT_CHANNEL_ID || "";
+      const teamId = process.env.LINEAR_TEAM_ID || "";
   
       if (sub === "plan") {
-        // triggers weekly sprint planning immediately
-        await fetch(`${base}/api/coach/plan`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        // 1) Fetch weekly roadmap
+        // NOTE: import at top:  import { fetchWeeklyPlan } from "@/lib/linear-planner";
+        const { fetchWeeklyPlan } = await import("@/lib/linear-planner");
+        const weekly = await fetchWeeklyPlan(teamId);
+    
+        // 2) Format Slack blocks (inline + optional channel post)
+        const days = Object.keys(weekly).sort(); // YYYY-MM-DD order
+        const lines = days.length
+          ? days.flatMap((d) => {
+              const items = weekly[d].map((it, i) => `• ${it.title}`);
+              return [`*${d}*`, ...items];
+            })
+          : ["_No issues scheduled this week_"];
+    
+        const blocks = [
+          { type: "header", text: { type: "plain_text", text: "Sprint Plan (This Week)", emoji: true } },
+          { type: "section", text: { type: "mrkdwn", text: lines.join("\n") } },
+          { type: "context", elements: [{ type: "mrkdwn", text: "Use `/coach today` for today’s checklist." }] },
+        ];
+    
+        // 3) Post to channel (project-manager style)
+        // NOTE: import at top:  import { postBlocks } from "@/lib/slack";
+        const { postBlocks } = await import("@/lib/slack");
+        if (channel) {
+          await postBlocks(channel, "Sprint Plan (This Week)", blocks);
+        }
+    
+        // 4) Also show it to you immediately (ephemeral)
         return NextResponse.json({
           response_type: "ephemeral",
-          text: "Planning sprint now… check the channel for the plan.",
+          text: days.length ? "Here’s the weekly roadmap:" : "No issues scheduled this week.",
+          blocks,
         });
       }
   
