@@ -1,20 +1,17 @@
-// Bulk-label existing Linear issues with week-* and phase-* based on sequence.
-
+// scripts/label-roadmap.mjs (paginated + estimates + hardened)
 const API = "https://api.linear.app/graphql";
 
 const KEY = process.env.LINEAR_API_KEY;
-const TEAM = process.env.LINEAR_TEAM_ID;          // e.g., team_abc123
-const ITEMS_PER_WEEK = Number(process.env.ITEMS_PER_WEEK || "10");
+const TEAM = process.env.LINEAR_TEAM_ID;
 
-// Phase schema controls which weeks map to which phase.
-// Example: PHASE1_WEEKS=8, PHASE2_WEEKS=8 → weeks 1..8 = phase-1, 9..16 = phase-2, 17+ = phase-3 (if any)
-const PHASE1_WEEKS = Number(process.env.PHASE1_WEEKS || "8");
-const PHASE2_WEEKS = Number(process.env.PHASE2_WEEKS || "8");
+const ITEMS_PER_WEEK  = Number(process.env.ITEMS_PER_WEEK  || "10");
+const PHASE1_WEEKS    = Number(process.env.PHASE1_WEEKS    || "8");
+const PHASE2_WEEKS    = Number(process.env.PHASE2_WEEKS    || "8");
 
-// Feature toggles
-const DRY_RUN         = process.env.DRY_RUN === "1";   // preview only
+const DRY_RUN         = process.env.DRY_RUN === "1";
 const AUTO_CLASSIFY   = process.env.AUTO_CLASSIFY === "1";
 const INJECT_TEMPLATE = process.env.INJECT_TEMPLATE === "1";
+const SET_ESTIMATES   = process.env.SET_ESTIMATES === "1"; // <-- NEW
 
 if (!KEY || !TEAM) {
   console.error("Set LINEAR_API_KEY and LINEAR_TEAM_ID");
@@ -26,42 +23,55 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function gql(query, variables = {}) {
   while (true) {
-    const res = await fetch(API, {
-      method: "POST",
-      headers: H,
-      body: JSON.stringify({ query, variables })
-    });
-    const json = await res.json();
-    const rate = json?.errors?.some(e =>
-      String(e?.extensions?.type || e?.extensions?.code || "").toLowerCase().includes("ratelimit")
-    );
-    if (!rate) return json;
-    console.warn("Rate limited; backing off 1500ms…");
-    await sleep(1500);
+    const res = await fetch(API, { method: "POST", headers: H, body: JSON.stringify({ query, variables }) });
+    let json;
+    try { json = await res.json(); } catch (e) {
+      console.error("Linear: non-JSON response", await res.text());
+      throw e;
+    }
+    if (json.errors) {
+      const rate = json.errors.some(e => String(e?.extensions?.type||e?.extensions?.code||"").toLowerCase().includes("ratelimit"));
+      console.error("Linear GraphQL errors:", JSON.stringify(json.errors, null, 2));
+      if (rate) { console.warn("Rate limited; backing off 1500ms…"); await sleep(1500); continue; }
+      throw new Error("GraphQL error");
+    }
+    return json;
   }
 }
 
-async function fetchRoadmapIssues() {
-  // Pull all roadmap issues on the team, ordered by createdAt (import order).
+// ------- Queries/Mutations (ID! types + pagination) -------
+
+// Pull ALL open team issues in createdAt order, 250 per page
+async function fetchTeamIssues() {
   const q = `
-    query($tid:String!) {
+    query($tid:ID!, $after:String) {
       issues(
-        first: 500,
+        first: 250,
+        after: $after,
         orderBy: createdAt,
-        filter: {
-          team: { id: { eq: $tid } },
-          labels: { some: { name: { eq: "roadmap" } } },
-          state: { name: { nin: ["Done","Canceled","Duplicate"] } }
+        filter:{
+          team:{ id:{ eq:$tid } },
+          state:{ name:{ nin:["Done","Canceled","Duplicate"] } }
         }
-      ) {
+      ){
         nodes {
-          id number title description
+          id number title description estimate
           labels { nodes { id name } }
         }
+        pageInfo { hasNextPage endCursor }
       }
     }`;
-  const j = await gql(q, { tid: TEAM });
-  return j.data.issues.nodes;
+  const all = [];
+  let after = null;
+  while (true) {
+    const j = await gql(q, { tid: TEAM, after });
+    const { nodes, pageInfo } = j.data.issues;
+    all.push(...nodes);
+    if (!pageInfo?.hasNextPage) break;
+    after = pageInfo.endCursor;
+    await sleep(150); // be gentle
+  }
+  return all;
 }
 
 const labelCache = new Map();
@@ -69,9 +79,8 @@ async function getOrCreateLabel(name) {
   const key = name.toLowerCase();
   if (labelCache.has(key)) return labelCache.get(key);
 
-  // fetch existing labels once
   if (!labelCache.size) {
-    const q = `query($tid:String!){
+    const q = `query($tid:ID!){
       issueLabels(first:200, filter:{ team:{ id:{ eq:$tid }}}){ nodes{ id name } }
     }`;
     const j = await gql(q, { tid: TEAM });
@@ -79,7 +88,6 @@ async function getOrCreateLabel(name) {
   }
   if (labelCache.has(key)) return labelCache.get(key);
 
-  // create label
   const m = `mutation($input: IssueLabelCreateInput!){
     issueLabelCreate(input:$input){ issueLabel { id name } }
   }`;
@@ -89,42 +97,32 @@ async function getOrCreateLabel(name) {
   return id;
 }
 
-function weekFromIndex(index0) {
-  // index0 is 0-based in createdAt order; week starts at 1
-  return Math.floor(index0 / ITEMS_PER_WEEK) + 1;
-}
-function phaseFromWeek(week) {
-  if (week <= PHASE1_WEEKS) return 1;
-  if (week <= PHASE1_WEEKS + PHASE2_WEEKS) return 2;
-  return 3; // everything beyond goes to phase-3 by default
+function weekFromIndex(i0) { return Math.floor(i0 / ITEMS_PER_WEEK) + 1; }
+function phaseFromWeek(w) {
+  return w <= PHASE1_WEEKS ? 1 : 2;
 }
 
 function classify(title) {
   const t = title.toLowerCase();
-  const labels = [];
+  const out = [];
+  if (/(review|learn|study|read|prep|exam)/.test(t)) out.push("type:study");
+  else if (/(deploy|infrastructure|terraform|aws|eks|ecs|cloudwatch|iam|s3|cloudfront|lambda)/.test(t)) out.push("type:infra");
+  else if (/(ci|cd|jenkins|github actions|pipeline|build|lint|test)/.test(t)) out.push("type:ci-cd");
+  else out.push("type:build");
 
-  // type
-  if (/(review|learn|study|read|prep|exam)/.test(t)) labels.push("type:study");
-  else if (/(deploy|infrastructure|terraform|aws|eks|ecs|cloudwatch|iam|s3|cloudfront|lambda)/.test(t)) labels.push("type:infra");
-  else if (/(ci|cd|jenkins|github actions|pipeline|build|lint|test)/.test(t)) labels.push("type:ci-cd");
-  else labels.push("type:build");
+  if (/(react|next|typescript|chart|recharts|d3|vite|frontend)/.test(t)) out.push("area:frontend");
+  if (/(chart|sankey|funnel|donut|scatter|line)/.test(t)) out.push("area:data-viz");
+  if (/(ai|llm|prompt|rag|openai|anthropic)/.test(t)) out.push("area:ai");
+  if (/(aws|ecs|eks|cloudwatch|iam|s3|cloudfront|lambda|ecr)/.test(t)) out.push("area:aws");
+  if (/jenkins/.test(t)) out.push("area:jenkins");
+  if (/(github actions|gha)/.test(t)) out.push("area:gha");
+  if (/terraform/.test(t)) out.push("area:terraform");
+  if (/(k8s|kubernetes|helm)/.test(t)) out.push("area:k8s");
 
-  // area
-  if (/(react|next|typescript|chart|recharts|d3|vite|frontend)/.test(t)) labels.push("area:frontend");
-  if (/(chart|sankey|funnel|donut|scatter|line)/.test(t)) labels.push("area:data-viz");
-  if (/(ai|llm|prompt|rag|openai|anthropic)/.test(t)) labels.push("area:ai");
-  if (/(aws|ecs|eks|cloudwatch|iam|s3|cloudfront|lambda|ecr)/.test(t)) labels.push("area:aws");
-  if (/jenkins/.test(t)) labels.push("area:jenkins");
-  if (/(github actions|gha)/.test(t)) labels.push("area:gha");
-  if (/terraform/.test(t)) labels.push("area:terraform");
-  if (/(k8s|kubernetes|helm)/.test(t)) labels.push("area:k8s");
-
-  // effort
-  if (/(review|learn|study|read)/.test(t)) labels.push("effort:S");
-  else if (/(deploy|infrastructure|terraform|aws|eks|ecs|jenkins|pipeline)/.test(t)) labels.push("effort:M");
-  else labels.push("effort:M");
-
-  return labels;
+  if (/(review|learn|study|read)/.test(t)) out.push("effort:S");
+  else if (/(deploy|infrastructure|terraform|aws|eks|ecs|jenkins|pipeline)/.test(t)) out.push("effort:M");
+  else out.push("effort:M");
+  return out;
 }
 
 function detailTemplateFor(title, extra = []) {
@@ -155,6 +153,27 @@ Paste links (branch, PR, preview URL, dashboards).
 _Autogenerated for: ${title}_`;
 }
 
+// --- NEW: estimates helpers ---
+function effortToHours(effortLabels) {
+  if (effortLabels.includes("effort:S")) return 1;
+  if (effortLabels.includes("effort:L")) return 6;
+  return 3; // default M
+}
+
+async function setEstimate(issueId, hours) {
+  const m = `mutation($id:String!, $est:Int){ issueUpdate(id:$id, input:{ estimate:$est }){ success } }`;
+  const r = await gql(m, { id: issueId, est: Math.max(0, Math.round(hours)) });
+  return r.data.issueUpdate.success;
+}
+
+async function maybeSetEstimate(issue, labelsSet) {
+  if (!SET_ESTIMATES) return;
+  if (typeof issue.estimate === "number" && issue.estimate > 0) return;
+  const labelNames = Array.from(labelsSet);
+  const hours = effortToHours(labelNames);
+  await setEstimate(issue.id, hours);
+}
+
 async function updateIssue(issueId, { labelIds, description }) {
   const m = `mutation($id:String!,$input: IssueUpdateInput!){
     issueUpdate(id:$id, input:$input){ success }
@@ -167,24 +186,32 @@ async function updateIssue(issueId, { labelIds, description }) {
 }
 
 (async function main(){
-  const issues = await fetchRoadmapIssues();
-  console.log(`Found ${issues.length} roadmap issues.`);
+  const issues = await fetchTeamIssues();
+  console.log(`Found ${issues.length} open issues on team ${TEAM}.`);
 
   let index = 0, labeled = 0;
   for (const it of issues) {
-    const thisWeek = weekFromIndex(index);
-    const thisPhase = phaseFromWeek(thisWeek);
-    const weekLabel = `week-${thisWeek}`;
-    const phaseLabel = `phase-${thisPhase}`;
+    const week = weekFromIndex(index);
+    const phase = phaseFromWeek(week);
 
+    // Start with existing labels on the issue
     const toAdd = new Set((it.labels?.nodes || []).map(l => l.name));
-    toAdd.add("roadmap");
-    toAdd.add(weekLabel);
-    toAdd.add(phaseLabel);
 
+    // Always add these:
+    toAdd.add("roadmap");
+    toAdd.add(`week-${week}`);
+    toAdd.add(`phase-${phase}`);
+
+    // Add derived labels from title
     if (AUTO_CLASSIFY) classify(it.title).forEach(l => toAdd.add(l));
 
-    // resolve label IDs
+    // --- NEW: set estimate based on effort:* if missing ---
+    if (!DRY_RUN) {
+      await maybeSetEstimate(it, toAdd);
+      await sleep(80);
+    }
+
+    // Resolve label IDs
     const labelIds = [];
     for (const name of toAdd) {
       const id = await getOrCreateLabel(name);
@@ -192,23 +219,20 @@ async function updateIssue(issueId, { labelIds, description }) {
       await sleep(30);
     }
 
+    // Inject description template if empty
     let desc = it.description || "";
     if (INJECT_TEMPLATE && (!desc || desc.trim().length < 5)) {
-      // pick an effort label for template hint
       const extras = Array.from(toAdd).filter(l => l.startsWith("effort:"));
       desc = detailTemplateFor(it.title, extras);
     }
 
     if (DRY_RUN) {
-      console.log(`DRY_RUN would label #${it.number}: ${it.title} → [${Array.from(toAdd).join(", ")}]${INJECT_TEMPLATE && (!it.description || it.description.trim().length < 5) ? " + inject template" : ""}`);
+      console.log(`DRY_RUN would label #${it.number}: ${it.title} → [${Array.from(toAdd).join(", ")}]${INJECT_TEMPLATE && (!it.description || it.description.trim().length < 5) ? " + inject template" : ""}${SET_ESTIMATES && (!it.estimate ? " + set estimate" : "")}`);
     } else {
       const ok = await updateIssue(it.id, { labelIds, description: desc });
       if (!ok) console.warn(`Update failed for #${it.number}: ${it.title}`);
-      else {
-        labeled++;
-        console.log(`Labeled #${it.number}: ${weekLabel}, ${phaseLabel}`);
-      }
-      await sleep(120); // gentle
+      else { labeled++; console.log(`Labeled #${it.number}: week-${week}, phase-${phase}${SET_ESTIMATES ? " (estimate set if missing)" : ""}`); }
+      await sleep(120); // be gentle on API
     }
 
     index++;

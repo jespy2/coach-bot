@@ -108,6 +108,21 @@ export async function setDueDate(issueId: string, dateISO: string) {
   await gql(q, { id: issueId, d: dateISO });
 }
 
+// --- Estimates (hours) helpers ---
+
+export async function setEstimate(issueId: string, estimateHours: number) {
+  const q = `
+    mutation($id:String!, $est:Int){
+      issueUpdate(id:$id, input:{ estimate:$est }){ success }
+    }`;
+  await gql(q, { id: issueId, est: Math.max(0, Math.round(estimateHours)) });
+}
+
+/** Sum of estimates (hours) for a set of issues */
+export function sumEstimates(issues: { estimate?: number | null }[]) {
+  return issues.reduce((acc, i) => acc + (i.estimate || 0), 0);
+}
+
 // ----- Date/week helpers (program start, blackout weeks, weekdays) -----
 function mondayOf(d: Date) {
   const x = new Date(d);

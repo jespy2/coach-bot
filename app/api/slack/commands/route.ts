@@ -78,6 +78,17 @@ export async function POST(req: NextRequest) {
       const token = process.env.SCHEDULE_TOKEN || "";
       const channel = process.env.SLACK_DEFAULT_CHANNEL_ID || "";
       const teamId = process.env.LINEAR_TEAM_ID || "";
+
+      if (sub === "velocity") {
+        await fetch(`${base}/api/coach/velocity`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` }
+        }).catch(()=>{});
+        return NextResponse.json({
+          response_type: "ephemeral",
+          text: "Posted velocity to the channel."
+        });
+      }
   
       if (sub === "plan") {
         // 1) Fetch weekly roadmap
