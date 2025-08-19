@@ -15,12 +15,10 @@
 // - Labels are idempotent; missing labels are auto-created.
 // - Topic labels inferred from issue title; extend `topicMatchers` as needed.
 
-import 'node-fetch';
-
 const API = "https://api.linear.app/graphql";
 const KEY = process.env.LINEAR_API_KEY;
 const TEAM = process.env.LINEAR_TEAM_ID;
-const START_DATE = process.env.START_DATE; // YYYY-MM-DD
+const START_DATE = process.env.PROGRAM_START_DATE; // YYYY-MM-DD
 const DRY_RUN = process.env.DRY_RUN === "1";
 const ONLY_MOVE_TODAY = process.env.ONLY_MOVE_TODAY === "1";
 const ITEMS_PER_WEEK = Number(process.env.ITEMS_PER_WEEK || "10");
@@ -231,7 +229,9 @@ async function main() {
       const phaseLabel = phase;
 
       // due date = START_DATE + (week-1)*7 + (index%ITEMS_PER_WEEK) stagger inside the week
-      const dayOffset = (week - 1) * 7 + (index % ITEMS_PER_WEEK);
+      const intra = index % ITEMS_PER_WEEK;       // 0..9
+      const dayOffset = (week - 1) * 7 + (intra % 7); // 0..6 within the week
+
       dueISO = addDays(START_DATE, dayOffset);
 
       // build label set
@@ -268,7 +268,7 @@ async function main() {
     }
 
     // 2) move due-today from Backlog -> Todo (strict guard)
-    const isDueToday = (it.dueDate || dueISO) === todayISO;
+    const isDueToday = (it.dueDate || dueISO) === tzToday;
     const inBacklog = !!(backlog && it.state?.id === backlog.id);
     const alreadyTodo = !!(todo && it.state?.id === todo.id);
 
