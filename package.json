@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "roadmap:plan": "DRY_RUN=1 node --env-file=.env.local scripts/apply-roadmap.mjs",
+    "roadmap:apply": "node --env-file=.env.local scripts/apply-roadmap.mjs",
+    "roadmap:move-today": "ONLY_MOVE_TODAY=1 node --env-file=.env.local scripts/apply-roadmap.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start"
-  },
+  }, 
   "dependencies": {
     "@slack/web-api": "^7.0.4",
     "@supabase/supabase-js": "^2.45.0",
