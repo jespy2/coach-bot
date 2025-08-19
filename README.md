@@ -1,107 +1,65 @@
-# 📘 Coach-Bot Starter Lite
+  # AI DevOps Training Assistant
 
-Coach-Bot Starter Lite is a lightweight automation toolkit that helps structure your **study roadmap, Linear issues, and weekly coaching workflow**. It labels tasks, injects templates, manages phases, and enforces consistency for your dev/DevOps training journey.
+A Linear-synced training assistant that auto-labels issues, sets dates from a roadmap, and moves the right work into **Todo** at the right time.
 
----
+## What this project does
 
-## 🚀 Features
+- Applies consistent labels:
+  - `week-{N}` (1–16)
+  - `phase-1` for weeks **1–8**, `phase-2` for weeks **9–16** (no `phase-3`)
+  - `area:*`, `type:*`, `effort:S|M|L`
+  - `milestone:capstone` (week 8 or explicitly detected)
+- Sets **due dates** from the roadmap:
+  - **Week 1 starts on Wednesday 2025-08-20**
+  - **Weeks 2–16 start on Mondays**
+  - Each issue’s due date = **start of its assigned week**
+- Keeps the **Todo** column accurate:
+  - Move **today’s** items into Todo, or
+  - Move **the whole current week** into Todo
+  - Optionally push future-dated items *out* of Todo
 
-* **Automatic labeling** of issues with:
+## Quick start
 
-  * `roadmap`, `week-X`, `phase-X`
-  * Effort estimates (`effort:S/M/L`)
-  * Type/area classifiers (e.g., `type:ci-cd`, `area:aws`)
-* **Template injection** for missing issue descriptions.
-* **Phase enforcement**: prevents drift into `phase-3` unless explicitly allowed.
-* **Dry-run mode** for safe previews before applying changes.
+1) Create `.env.local`:
 
----
+    LINEAR_API_KEY=lin_api_xxx
+    LINEAR_TEAM_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    START_DATE=2025-08-20           # Week 1 anchor (Wednesday)
+    TIMEZONE=America/Denver
 
-## ⚙️ Setup
+2) Preview a full reset (no writes):
 
-### Prerequisites
+    DRY_RUN=1 node --env-file=.env.local scripts/reset-roadmap.mjs
 
-* Node.js (>= 18)
-* A Linear API key (with read + write scope)
+3) Apply labels, dates, and descriptions:
 
-### Environment Variables
+    node --env-file=.env.local scripts/reset-roadmap.mjs
 
-Create a `.env` file or export in your shell:
+4) Keep Todo accurate (pick one):
 
-```bash
-export LINEAR_API_KEY="lin_api_xxx"
-export LINEAR_TEAM_ID="team-id-uuid"
-export ITEMS_PER_WEEK=10
-export PHASE1_WEEKS=8
-export PHASE2_WEEKS=8
-export AUTO_CLASSIFY=1
-export INJECT_TEMPLATE=1
-export SET_ESTIMATES=1
-```
+   - **Today only**:
 
----
+         ONLY_MOVE_TODAY=1 node --env-file=.env.local scripts/reset-roadmap.mjs
 
-## 🛠️ Scripts
+   - **Entire current week**:
 
-### Label Roadmap
+         MOVE_BY_WEEK=1 node --env-file=.env.local scripts/reset-roadmap.mjs
 
-Preview labels before applying:
+5) Validate schedule:
 
-```bash
-export DRY_RUN=1
-node scripts/label-roadmap.mjs
-```
+    node --env-file=.env.local scripts/check-roadmap.mjs
 
-Apply labels:
+## Scripts
 
-```bash
-unset DRY_RUN
-node scripts/label-roadmap.mjs
-```
+- `scripts/reset-roadmap.mjs` — canonical reset (labels + dates + description + optional movement)
+- `scripts/check-roadmap.mjs` — reports due-date vs. expected week windows
 
-### Fix Phases
+## Columns / states
 
-Corrects `phase-3` drift back into `phase-2`:
+If your team uses custom names, you can override detection:
 
-```bash
-node scripts/fix-phases.mjs
-```
+    SOURCE_STATE_NAME="backlog" DEST_STATE_NAME="Todo (Today)" \
+    node --env-file=.env.local scripts/reset-roadmap.mjs
 
----
-
-## 📅 Workflow
-
-* **Weekly**: run `label-roadmap.mjs` to tag new issues and inject templates.
-* **Cleanup**: run `fix-phases.mjs` on Friday before coach sync.
-* **Slack**: share weekly progress, snippets, and reminders with `/remind`.
-
----
-
-## 🔧 Troubleshooting
-
-* **Error: `addLabelIds` not defined** → use `addedLabelIds`/`removedLabelIds`.
-* **Rate limits** → add sleeps between requests.
-* **Phase-3 drift** → run `fix-phases.mjs`.
-* **Missing estimates** → ensure `SET_ESTIMATES=1` is set.
-
----
-
-## 📄 License
-
-MIT — free to use and extend.
-
----
-
-## 🙌 Contributing
-
-1. Fork the repo
-2. Add scripts or tweak classifiers/templates
-3. PRs welcome — especially for new automation helpers!
-
----
-
-## 💡 Pro Tips
-
-* Always test new runs with `DRY_RUN=1` first.
-* Customize `classify()` in `label-roadmap.mjs` for your stack.
-* Adjust `ITEMS_PER_WEEK` as your workload changes.
+- **Source** defaults to the state named “backlog” or type `backlog`
+- **Dest** defaults to a state named “todo” or type `unstarted`/`triage`

@@ -1,40 +1,34 @@
-# 🗺️ Weekly Roadmap Overview
+# Weekly Roadmap (Weeks 1–16)
 
-This 16-week program is broken into two phases, each with specific goals and a weekly focus:
+> **Week boundaries**
+>
+> - **Week 1** start: **Wed, 2025-08-20**
+> - **Weeks 2–16** start: every **Monday** thereafter
+> - Each issue’s due date = **start of its assigned week**
+> - Phases: **phase-1** = weeks **1–8** (capstone at week 8), **phase-2** = weeks **9–16**
 
----
+| Week | Phase   | Focus / Defaults                                  | Labels Applied By Script                                |
+|-----:|---------|----------------------------------------------------|---------------------------------------------------------|
+| 1    | phase-1 | TypeScript & JS Review                             | `week-1`, `phase-1`, `area:frontend`, `type:study`      |
+| 2    | phase-1 | Next.js Deep Dive                                  | `week-2`, `phase-1`, `area:frontend`, `type:build`      |
+| 3    | phase-1 | Recharts & Visualization Foundations               | `week-3`, `phase-1`, `area:data-viz`, `type:build`      |
+| 4    | phase-1 | GitHub Actions & Pipelines                         | `week-4`, `phase-1`, `area:ci-cd`, `type:infra`         |
+| 5    | phase-1 | AWS Basics (S3, CloudFront, Lambda)                | `week-5`, `phase-1`, `area:aws`, `type:infra`           |
+| 6    | phase-1 | AI / Prompt / LLM Fundamentals                     | `week-6`, `phase-1`, `area:ai`, `type:study`            |
+| 7    | phase-1 | Terraform & IaC                                    | `week-7`, `phase-1`, `area:terraform`, `type:infra`     |
+| 8    | phase-1 | Capstone Completion & Polishing                    | `week-8`, `phase-1`, `milestone:capstone`, `type:review` (+ `area:frontend` default) |
+| 9    | phase-2 | Jenkins Pipelines                                  | `week-9`, `phase-2`, `area:jenkins`, `type:infra`       |
+| 10   | phase-2 | GitHub Actions Advanced                            | `week-10`, `phase-2`, `area:gha`, `type:infra`          |
+| 11   | phase-2 | Kubernetes Intro                                   | `week-11`, `phase-2`, `area:k8s`, `type:infra`          |
+| 12   | phase-2 | Helm, Scaling, Deployments                         | `week-12`, `phase-2`, `area:k8s`, `type:infra`          |
+| 13   | phase-2 | AWS Certification Study                            | `week-13`, `phase-2`, `area:aws`, `type:study`          |
+| 14   | phase-2 | Terraform Certification Study                      | `week-14`, `phase-2`, `area:terraform`, `type:study`    |
+| 15   | phase-2 | Jenkins/GHA Certification Study                    | `week-15`, `phase-2`, `area:ci-cd`, `type:study`        |
+| 16   | phase-2 | Review, Wrap-up, Retrospective                     | `week-16`, `phase-2`, `type:review`                     |
 
-## Phase 1: Core Skills (Weeks 1–8)
+**Effort** is inferred per-title:
+- `effort:S` — review, study, learn, quiz, read (≈1h)
+- `effort:M` — setup, configure, integrate, build, implement, dockerize (≈2–3h)
+- `effort:L` — k8s/helm/terraform/deploy/production/exam, and all **week 8** capstone work (≈4–6h)
 
-| Week | Focus Area                             |
-|------|-----------------------------------------|
-| 1    | TypeScript Review                      |
-| 2    | Next.js Fundamentals                   |
-| 3    | DevOps Fundamentals (CI/CD, Pipelines) |
-| 4    | AWS Basics + IAM                       |
-| 5    | Containers (Docker + ECS)              |
-| 6    | Infrastructure as Code (Terraform)     |
-| 7    | Observability (CloudWatch, Logs)       |
-| 8    | Review + Applied Practice              |
-
----
-
-## Phase 2: Certification Prep (Weeks 9–16)
-
-| Week  | Focus Area                               |
-|-------|-------------------------------------------|
-| 9–12 | Practice Projects & Test Simulations     |
-| 13–15| Deep Dives & Final Review                |
-| 16    | Final Projects, Wrap-Up & Presentation  |
-
----
-
-## Labeling & Scheduling Rules
-
-- Each week has ~10 tasks
-- Issues should be labeled with:
-  - `week-{N}`
-  - `phase-1` (for weeks 1–8) or `phase-2` (for weeks 9–16)
-  - Additional labels inferred from title (e.g. `type:study`, `area:aws`)
-- Each task should have a due date corresponding to its assigned week
-- Tasks must move from Backlog → Todo on the assigned day
+> You can manually pin any issue by adding a `week-N` label. Re-runs with `RESPECT_EXISTING_WEEK=1` will honor your pin.

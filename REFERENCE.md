@@ -1,149 +1,236 @@
-# 🚀 Coach-Bot Reference Workflow
+# Reference — Daily & Weekly Workflow (Slack‑first)
 
-## 📅 Daily Workflow
+This is the **single-source handbook** for your AI DevOps Training Assistant. It prioritizes the **Slack integration** for day‑to‑day use, while keeping **CLI scripts** as a backup when you need local repairs.
 
-* **Morning (7:30 AM job or manual):**
+- **Phases**: `phase-1` (weeks 1–8), `phase-2` (weeks 9–16)  
+- **Week boundaries**: **Week 1** starts **Wed 2025‑08‑20**; **Weeks 2–16** start on **Mondays**  
+- **Due-date rule**: each issue’s **due date = the start of its assigned week**  
+- **Movement rule**: issues move **Backlog → Todo** via the **Planner** (Slack `/coach plan` or `POST /api/coach/plan`)  
+- **TZ**: `America/Denver` (change via `PLANNER_TIMEZONE`)
 
-  1. Run `fix-due-dates.mjs` with `ONLY_OVERDUE=1` to roll forward any overdue issues.
-
-     ```bash
-     export LINEAR_API_KEY="your_key"
-     export LINEAR_TEAM_ID="your_team"
-     export ONLY_OVERDUE=1
-     node scripts/fix-due-dates.mjs
-     ```
-  2. Run `label-roadmap.mjs` to apply labels, estimates, and velocity tracking:
-
-     ```bash
-     export ITEMS_PER_WEEK=10
-     export PHASE1_WEEKS=8
-     export PHASE2_WEEKS=8
-     export SET_ESTIMATES=1
-     node scripts/label-roadmap.mjs
-     ```
-  3. Check Slack `/coach today` to see today’s plan.
-
-* **Throughout the day:**
-
-  * Update progress in Linear issues as you work.
-  * Use `/coach focus` in Slack to get your next priority item.
-  * Use `/coach done` when completing an issue.
-
-* **End of day:**
-
-  * Optional: Run `/coach summary` for a daily recap.
-  * Push changes to Linear to keep velocity tracking accurate.
+Controlled namespaces: `week-*`, `phase-*`, `area:*`, `type:*`, `effort:S|M|L`, `milestone:capstone`.
 
 ---
 
-## 📆 Weekly Workflow
+## 1) Daily & Weekly Playbooks (Slack)
 
-* **Monday morning:**
+### Daily (Mon–Fri)
 
-  * Run `/coach plan` in Slack for the week’s breakdown.
-  * Verify due dates are aligned with your availability.
+1) **Plan the day** (schedule & move today’s items into **Todo**):
+   ```
+   /coach plan
+   ```
 
-* **Friday afternoon:**
+2) **Review today’s checklist** (no re‑plan):
+   ```
+   /coach today
+   ```
 
-  * Use `/coach reflect` to review progress.
-  * Decide if you’ll work extra days over the weekend.
+3) **Work the list**. If **Todo** shows future‑dated items, just re‑run:
+   ```
+   /coach plan
+   ```
 
----
+> **Tip**: You can automate mornings with the HTTP endpoint `POST /api/schedule/morning` (see “Automation API”). It plans **only if today is empty**, then posts the checklist to Slack.
 
-## 💬 Slack Commands
+### Weekly (Monday)
 
-* `/coach today` → shows tasks due today.
-* `/coach plan` → shows tasks for the week.
-* `/coach focus` → next priority item.
-* `/coach summary` → recap of completed/remaining items.
-* `/coach reflect` → weekly review.
+1) **Kick off the week’s plan**:
+   ```
+   /coach plan
+   ```
 
----
-
-## 💻 CLI Essentials
-
-* **Relabel roadmap (with estimates):**
-
-  ```bash
-  export SET_ESTIMATES=1
-  node scripts/label-roadmap.mjs
-  ```
-
-* **Fix overdue due dates (daily run):**
-
-  ```bash
-  export ONLY_OVERDUE=1
-  node scripts/fix-due-dates.mjs
-  ```
-
-* **Force full realignment (rare):**
-
-  ```bash
-  unset ONLY_OVERDUE
-  node scripts/fix-due-dates.mjs
-  ```
-
-* **Shift anchor start date (ad hoc):**
-
-  ```bash
-  export OVERRIDE_START_DATE="2025-09-01"
-  node scripts/fix-due-dates.mjs
-  ```
+2) Optional hygiene passes (as needed):
+   - Refresh labels/templates/estimates via CLI (see “CLI Backup & Repairs”)
+   - Realign due dates if needed (e.g., after anchor changes or outages)
 
 ---
 
-## 🛠️ Troubleshooting
+## 2) Slack Commands (Cheat Sheet)
 
-**Issue:** Seeing Phase 3 labels
-➡ Cause: Script defaulted to generating beyond Phase 2.
-➡ Fix: Re-run `label-roadmap.mjs` with `PHASE1_WEEKS` and `PHASE2_WEEKS` set correctly.
+> Use in DM with your bot. Some commands support `--dry` to preview (when applicable).
 
-**Issue:** GraphQL error about `addLabelIds`
-➡ Cause: Wrong mutation fields.
-➡ Fix: Use `addedLabelIds` and `removedLabelIds` instead.
+- **Plan & move to Todo**  
+  ```
+  /coach plan
+  ```
 
-**Issue:** Due dates assigned to weekends or vacation days
-➡ Fix: Set environment variables:
+- **Show today’s list**  
+  ```
+  /coach today
+  ```
 
+- **Velocity / Review**  
+  ```
+  /coach velocity
+  /coach review
+  ```
+
+*(Optional commands you may add later: pin to week, set due date, label/unlabel; current repo primarily exposes the planner & summaries.)*
+
+---
+
+## 3) Automation API (Server)
+
+- **Plan the day** (same outcome as `/coach plan`):
+  ```bash
+  curl -s -X POST https://<your-app-domain>/api/coach/plan     -H "Authorization: Bearer $SCHEDULE_TOKEN"
+  ```
+
+- **Morning schedule** (plan *only if* today is empty, then post checklist to Slack):
+  ```bash
+  curl -s -X POST https://<your-app-domain>/api/schedule/morning     -H "Authorization: Bearer $SCHEDULE_TOKEN"
+  ```
+
+> **Recommended schedule**: Weekdays at **08:00** in `PLANNER_TIMEZONE`.
+
+---
+
+## 4) Environment
+
+Create `.env.local` in the repo root:
+
+```env
+# Linear
+LINEAR_API_KEY=lin_api_xxx
+LINEAR_TEAM_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# Program anchors & calendar
+PROGRAM_START_DATE=2025-08-20     # Week 1 anchor (Wed); Weeks 2+ auto-start Mon
+PLANNER_TIMEZONE=America/Denver   # Affects “today” and week math
+
+# Optional calendar controls (comma-separated ISO dates)
+OFF_DATES=                       # e.g. 2025-09-01,2025-11-27
+EXTRA_WORK_DATES=                # e.g. 2025-09-07
+BLACKOUT_WEEKS=                  # e.g. 2025-11-24
+
+# Planner behavior
+PLANNER_CAPACITY_PER_DAY=5       # Max items planner will move/schedule per day
+SCHEDULE_TOKEN=sh_xxx            # Bearer for protected endpoints
+SLACK_DEFAULT_CHANNEL_ID=C012345 # Where daily posts go (optional)
+
+# Script flags (set per-invocation; listed here for reference)
+# DRY_RUN=1
+# ONLY_OVERDUE=1
+# AUTO_CLASSIFY=1
+# INJECT_TEMPLATE=1
+# SET_ESTIMATES=1
+# OVERRIDE_START_DATE=YYYY-MM-DD
+```
+
+> **Compatibility note**: If older scripts expect `START_DATE`, set **both** `PROGRAM_START_DATE` and `START_DATE` to the same value.
+
+---
+
+## 5) CLI Backup & Repairs (local)
+
+All scripts run from repo root and honor `.env.local`. **Dry‑run first**.
+
+### A) Labeling / Templates / Estimates — `scripts/label-roadmap.mjs`
+
+- Repairs `week-*`, `phase-*`, `area:*`, `type:*`, `effort:*`, `milestone:capstone`
+- Can auto‑classify `area:*` / `type:*` from titles
+- Can (re)generate the detailed description (Goal, Context, Plan, DoD, Timebox, Artifacts)
+- Can set time estimates from `effort:*`
+
+**Preview**:
 ```bash
-export OFF_DATES="2025-09-05,2025-11-27"
-export EXTRA_WORK_DATES="2025-09-14"
-node scripts/fix-due-dates.mjs
+DRY_RUN=1 node --env-file=.env.local scripts/label-roadmap.mjs
+```
+
+**Apply (with helpers)**:
+```bash
+AUTO_CLASSIFY=1 INJECT_TEMPLATE=1 SET_ESTIMATES=1 node --env-file=.env.local scripts/label-roadmap.mjs
+```
+
+### B) Due‑Date Repair — `scripts/fix-due-dates.mjs`
+
+- Realigns due dates to week starts using `PROGRAM_START_DATE`
+- Special case: **Week 1 = Wed 2025‑08‑20**, thereafter **Mondays**
+- Honors `OFF_DATES`, `EXTRA_WORK_DATES`, `ONLY_OVERDUE`
+
+**Preview**:
+```bash
+DRY_RUN=1 node --env-file=.env.local scripts/fix-due-dates.mjs
+```
+
+**Apply (all)**:
+```bash
+node --env-file=.env.local scripts/fix-due-dates.mjs
+```
+
+**Roll overdue forward only**:
+```bash
+ONLY_OVERDUE=1 node --env-file=.env.local scripts/fix-due-dates.mjs
+```
+
+**Temporary re‑anchor (one‑off)**:
+```bash
+OVERRIDE_START_DATE=2025-08-20 node --env-file=.env.local scripts/fix-due-dates.mjs
+```
+
+### C) Phase Cleanup — `scripts/fix-phases.mjs`
+
+- Removes/repairs stale `phase-3` → `phase-2`
+- Ensures phases match assigned weeks
+
+**Preview**:
+```bash
+DRY_RUN=1 node --env-file=.env.local scripts/fix-phases.mjs
+```
+
+**Apply**:
+```bash
+node --env-file=.env.local scripts/fix-phases.mjs
 ```
 
 ---
 
-## 🌴 Taking Days Off
+## 6) Label & Effort Conventions
 
-When taking a day off, add it to `OFF_DATES` and re-run fixer:
+- **Phase**: `phase-1` (weeks 1–8), `phase-2` (weeks 9–16)  
+- **Week**: `week-N` (N ∈ 1..16)  
+- **Area**: `area:frontend`, `area:data-viz`, `area:ci-cd`, `area:aws`, `area:ai`, `area:terraform`, `area:jenkins`, `area:gha`, `area:k8s`, …  
+- **Type**: `type:study`, `type:build`, `type:infra`, `type:review`, …  
+- **Effort**: `effort:S` (~1h), `effort:M` (~2–3h), `effort:L` (~4–6h)  
+- **Milestone**: `milestone:capstone` (week 8)
 
-```bash
-export OFF_DATES="2025-09-05"
-export ONLY_OVERDUE=1
-node scripts/fix-due-dates.mjs
-```
-
-➡ Tasks will roll to the next valid workday.
-
----
-
-## 💪 Working Extra Days (e.g., Weekend)
-
-When working on a weekend or holiday, add to `EXTRA_WORK_DATES`:
-
-```bash
-export EXTRA_WORK_DATES="2025-09-14"
-export ONLY_OVERDUE=1
-node scripts/fix-due-dates.mjs
-```
-
-➡ Tasks can be assigned to that extra day.
+> The labeling script infers sensible defaults per week (e.g., Week 8 → `type:review`, `milestone:capstone`).
 
 ---
 
-## 🔑 Best Practices
+## 7) Troubleshooting
 
-* Keep `PROGRAM_START_DATE` as your “true” program anchor.
-* Use `OVERRIDE_START_DATE` only for temporary shifts.
-* Always dry-run before applying (`export DRY_RUN=1`).
-* Let Slack be your daily driver; use CLI mainly for realignments.
+- **Todo is empty** → Run `/coach plan` (or POST `/api/coach/plan`)  
+- **Dates look off by a day** → Verify `PLANNER_TIMEZONE=America/Denver`, re‑run `fix-due-dates.mjs`  
+- **Week 1 wrong** → Confirm `PROGRAM_START_DATE=2025-08-20` (Wed); then `fix-due-dates.mjs`  
+- **Too many items moved** → Lower `PLANNER_CAPACITY_PER_DAY`  
+- **401 from endpoints** → Check `SCHEDULE_TOKEN` and Authorization header  
+- **Stale `phase-3`** → Run `scripts/fix-phases.mjs`  
+- **Descriptions/estimates missing** → `INJECT_TEMPLATE=1` and/or `SET_ESTIMATES=1` with `label-roadmap.mjs`
+
+---
+
+## 8) Quick Reference
+
+**Slack (primary):**
+```
+/coach plan
+/coach today
+/coach velocity
+/coach review
+```
+
+**API (automation):**
+```bash
+curl -s -X POST https://<your-app-domain>/api/coach/plan   -H "Authorization: Bearer $SCHEDULE_TOKEN"
+
+curl -s -X POST https://<your-app-domain>/api/schedule/morning   -H "Authorization: Bearer $SCHEDULE_TOKEN"
+```
+
+**CLI (backup):**
+```bash
+DRY_RUN=1 node --env-file=.env.local scripts/label-roadmap.mjs
+DRY_RUN=1 node --env-file=.env.local scripts/fix-due-dates.mjs
+DRY_RUN=1 node --env-file=.env.local scripts/fix-phases.mjs
+```
