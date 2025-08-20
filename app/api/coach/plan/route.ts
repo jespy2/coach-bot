@@ -1,59 +1,53 @@
+// app/api/coach/plan/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { planWeek, fetchWeeklyPlan, currentProgramWeek } from "@/lib/linear-planner";
-import { postBlocks } from "@/lib/slack";
+import { applyRoadmap, fetchWeeklyPlan } from "@/lib/linear-planner";
+
+export const runtime = "nodejs";
+
+async function postBlocks(channel:string, title:string, blocks:any[]){
+  const token = process.env.SLACK_BOT_TOKEN!;
+  await fetch("https://slack.com/api/chat.postMessage", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({ channel, text: title, blocks }),
+  });
+}
 
 export async function POST(req: NextRequest) {
-  // Auth
-  const expected = `Bearer ${process.env.SCHEDULE_TOKEN}`;
-  if (req.headers.get("authorization") !== expected) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // simple bearer auth
+  const auth = req.headers.get("authorization") || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (!token || token !== (process.env.SCHEDULE_TOKEN || "")) {
+    return NextResponse.json({ ok:false, error:"unauthorized" }, { status:401 });
   }
 
+  // 1) Apply roadmap (labels, dates, normalize, move-today if enabled)
+  await applyRoadmap({ reset: false });
+
+  // 2) Build weekly plan blocks
+  const weekly = await fetchWeeklyPlan();
+  const days = Object.keys(weekly).sort();
+  const lines = days.length
+    ? days.flatMap(d => {
+        const items = weekly[d].map(it => `• ${it.title}`);
+        return [`*${d}*`, ...items];
+      })
+    : ["_No issues scheduled this week_"];
+
+  const blocks = [
+    { type: "header", text: { type: "plain_text", text: "Sprint Plan (This Week)", emoji: true } },
+    { type: "section", text: { type: "mrkdwn", text: lines.join("\n") } },
+    { type: "context", elements: [{ type: "mrkdwn", text: "Use `/coach today` for today’s checklist." }] },
+  ];
+
+  // 3) Post to channel (and return the same blocks to the caller)
   const channel = process.env.SLACK_DEFAULT_CHANNEL_ID || "";
-  const teamId = process.env.LINEAR_TEAM_ID || "";
-  const cap = Number(process.env.PLANNER_CAPACITY_PER_DAY || "3");
-  const programStart = process.env.PROGRAM_START_DATE || "unset";
-  const weekNum = currentProgramWeek(process.env.PROGRAM_START_DATE);
-
-  try {
-    // 1) Schedule the week (assign due dates, move to Todo)
-    const scheduled = (await planWeek(cap)).scheduled;
-
-    // 2) Build a weekly view (Mon–Fri) after scheduling
-    const weekly = teamId ? await fetchWeeklyPlan(teamId) : {};
-    const days = Object.keys(weekly).sort(); // YYYY-MM-DD
-
-    const scheduledLines = scheduled.length
-      ? scheduled.map(s => `• ${s.due} — ${s.title}`)
-      : ["_No items scheduled (blackout week or empty backlog for this week label)._"];
-
-    const weeklyLines = days.length
-      ? days.flatMap(d => [`*${d}*`, ...weekly[d].map(it => `• ${it.title}`)])
-      : ["_No issues with due dates this Mon–Fri._"];
-
-    const blocks = [
-      { type: "header", text: { type: "plain_text", text: `Sprint Plan (Week ${weekNum})`, emoji: true } },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: [
-            `*Capacity/day:* ${cap}`,
-            `*Program start:* ${programStart}`,
-            `*Scheduled (this run):*`,
-            ...scheduledLines,
-            "",
-            "*This week overview (Mon–Fri):*",
-            ...weeklyLines
-          ].join("\n")
-        }
-      },
-      { type: "context", elements: [{ type: "mrkdwn", text: "Use `/coach today` for today’s checklist." }] }
-    ];
-
-    if (channel) await postBlocks(channel, "Sprint Plan", blocks);
-    return NextResponse.json({ ok: true, week: weekNum, scheduledCount: scheduled.length });
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message || "plan failed" }, { status: 500 });
+  if (channel) {
+    await postBlocks(channel, "Sprint Plan (This Week)", blocks);
   }
+
+  return NextResponse.json({ ok:true, blocks });
 }

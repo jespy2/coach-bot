@@ -96,102 +96,124 @@ export async function POST(req: NextRequest) {
 
 		if (sub === "plan") {
 			// 1) Fire-and-forget the heavy weekly planner that posts to the channel.
-    fetch(`${baseUrl}/api/coach/plan`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ postToSlack: true }),
-    }).catch((e) => console.error("planner call failed", e));
+			fetch(`${baseUrl}/api/coach/plan`, {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${token}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ postToSlack: true }),
+			}).catch((e) => console.error("planner call failed", e));
 
-    // 2) Build a SAFE preview for the ephemeral response
-    const MAX_ITEMS = 12;      // prevent too-long lists
-    const MAX_TEXT = 2700;     // keep under Slack's ~3k char limit for section text
+			// 2) Build a SAFE preview for the ephemeral response
+			const MAX_ITEMS = 12; // prevent too-long lists
+			const MAX_TEXT = 2700; // keep under Slack's ~3k char limit for section text
 
-    // small helper to trim safely for Slack
-    const trimForSlack = (s: string, max = MAX_TEXT) =>
-      s.length <= max ? s : s.slice(0, max - 20) + " …";
+			// small helper to trim safely for Slack
+			const trimForSlack = (s: string, max = MAX_TEXT) =>
+				s.length <= max ? s : s.slice(0, max - 20) + " …";
 
-    let blocks: any[] | null = null;
-    let previewText = "Planning for this week… I’ll post the full plan shortly.";
+			let blocks: any[] | null = null;
+			let previewText =
+				"Planning for this week… I’ll post the full plan shortly.";
 
-    try {
-      const { fetchTodayTasks } = await import("@/lib/linear");
-      const items = await fetchTodayTasks(teamId);
+			try {
+				const { fetchTodayTasks } = await import("@/lib/linear");
+				const items = await fetchTodayTasks(teamId);
 
-      // shape: [{ id, title, url? }, ...]
-      const shown = (items ?? []).slice(0, MAX_ITEMS);
-      const extra = Math.max(0, (items?.length ?? 0) - shown.length);
+				// shape: [{ id, title, url? }, ...]
+				const shown = (items ?? []).slice(0, MAX_ITEMS);
+				const extra = Math.max(0, (items?.length ?? 0) - shown.length);
 
-      if (shown.length) {
-        const list = trimForSlack(
-          shown
-            .map((i, idx) => `• *${idx + 1}.* <${i.url ?? "#"}|${i.title}>`)
-            .join("\n")
-        );
+				if (shown.length) {
+					const list = trimForSlack(
+						shown
+							.map((i, idx) => `• *${idx + 1}.* <${i.url ?? "#"}|${i.title}>`)
+							.join("\n")
+					);
 
-        const suffix = extra > 0 ? `\n…and *${extra}* more due today.` : "";
+					const suffix = extra > 0 ? `\n…and *${extra}* more due today.` : "";
 
-        blocks = [
-          { type: "section", text: { type: "mrkdwn", text: `*Today (preview)*\n${list}${suffix}` } },
-        ];
+					blocks = [
+						{
+							type: "section",
+							text: {
+								type: "mrkdwn",
+								text: `*Today (preview)*\n${list}${suffix}`,
+							},
+						},
+					];
 
-        previewText = extra > 0
-          ? `Here’s a quick preview for today (+${extra} more). I’ll post the full weekly plan shortly.`
-          : `Here’s a quick preview for today. I’ll post the full weekly plan shortly.`;
-      } else {
-        blocks = [
-          { type: "section", text: { type: "mrkdwn", text: "_No open tasks due today._\nI’ll post the weekly plan shortly." } },
-        ];
-        previewText = "No open tasks due today. I’ll post the weekly plan shortly.";
-      }
-    } catch (e) {
-      // If preview fails, we still ACK fast below
-      console.error("preview build failed", e);
-      blocks = null;
-      previewText = "On it — planning now. I’ll post the weekly plan shortly.";
-    }
+					previewText =
+						extra > 0
+							? `Here’s a quick preview for today (+${extra} more). I’ll post the full weekly plan shortly.`
+							: `Here’s a quick preview for today. I’ll post the full weekly plan shortly.`;
+				} else {
+					blocks = [
+						{
+							type: "section",
+							text: {
+								type: "mrkdwn",
+								text: "_No open tasks due today._\nI’ll post the weekly plan shortly.",
+							},
+						},
+					];
+					previewText =
+						"No open tasks due today. I’ll post the weekly plan shortly.";
+				}
+			} catch (e) {
+				// If preview fails, we still ACK fast below
+				console.error("preview build failed", e);
+				blocks = null;
+				previewText =
+					"On it — planning now. I’ll post the weekly plan shortly.";
+			}
 
-    // 3) Immediate ephemeral reply (valid shape, safe size)
-    if (blocks) {
-      return NextResponse.json({
-        response_type: "ephemeral",
-        text: previewText,      // fallback text for clients without blocks
-        blocks,
-      });
-    }
-    return NextResponse.json({
-      response_type: "ephemeral",
-      text: previewText,
-    });
+			// 3) Immediate ephemeral reply (valid shape, safe size)
+			if (blocks) {
+				return NextResponse.json({
+					response_type: "ephemeral",
+					text: previewText, // fallback text for clients without blocks
+					blocks,
+				});
+			}
+			return NextResponse.json({
+				response_type: "ephemeral",
+				text: previewText,
+			});
 		}
 
 		if (sub === "today") {
-			// 1) Fetch the list directly so we can show it to you immediately
-			const teamId = process.env.LINEAR_TEAM_ID!;
-			const issues = (await fetchTodayTasks(teamId)) as TodayIssue[];
+			const token = process.env.SCHEDULE_TOKEN || "";
+			const baseUrl = new URL(req.url).origin;
 
-			// 2) Build blocks for both ephemeral reply and channel post
-			const blocks = toTodayBlocks(issues);
+			// Move due-today issues to Todo, then return a checklist
+			try {
+				const r = await fetch(`${baseUrl}/api/coach/move-today`, {
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}` },
+				});
+				const data = await r.json();
 
-			// 3) Fire-and-forget channel post via our existing endpoint (optional)
-			// (If this fails, at least you saw the ephemeral list.)
-			await fetch(`${baseUrl}/api/schedule/morning`, {
-				method: "POST",
-				headers: { Authorization: `Bearer ${token}` },
-			}).catch(() => {
-				/* ignore */
-			});
+				return NextResponse.json({
+					response_type: "ephemeral",
+					text: "Here’s your plan for today:",
+					blocks: Array.isArray(data.blocks) ? data.blocks : undefined,
+				});
+			} catch (e) {
+				// Fallback: show whatever we can without blocking
+				const teamId = process.env.LINEAR_TEAM_ID!;
+				const issues = (await fetchTodayTasks(teamId)) as TodayIssue[];
+				const blocks = toTodayBlocks(issues);
 
-			// 4) Show the checklist in your Slack client now
-			return NextResponse.json({
-				response_type: "ephemeral",
-				text: issues.length
-					? "Here’s your plan for today:"
-					: "No open tasks due today.",
-				blocks,
-			});
+				return NextResponse.json({
+					response_type: "ephemeral",
+					text: issues.length
+						? "Here’s your plan for today:"
+						: "No open tasks due today.",
+					blocks,
+				});
+			}
 		}
 
 		if (sub === "review") {
