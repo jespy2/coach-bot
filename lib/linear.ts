@@ -15,7 +15,7 @@ export async function fetchTodayTasks(teamIdEnv?: string): Promise<LinearIssue[]
 
   // Pull common fields including url/identifier so we can deep-link
   const query = /* GraphQL */ `
-    query($tid: String!) {
+    query($tid: ID!) {
       issues(
         filter: {
           team: { id: { eq: $tid } }

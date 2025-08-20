@@ -30,7 +30,7 @@ async function gql(query: string, variables: any = {}) {
 // ----- Workflow state helpers -----
 export async function getStates(): Promise<LinearState[]> {
   const q = `
-    query($tid:String!){
+    query($tid:ID!){
       workflowStates(first:50, filter:{ team:{ id:{ eq:$tid }}}){
         nodes{ id name }
       }
@@ -50,7 +50,7 @@ export async function getStateIdByName(name: string): Promise<string | null> {
 /** Generic backlog (not Done/In Progress/Todo/Blocked) ordered by updatedAt */
 export async function fetchBacklog(limit = 50): Promise<LinearIssue[]> {
   const q = `
-    query($tid:String!,$n:Int!){
+    query($tid:ID!,$n:Int!){
       issues(
         first:$n,
         filter:{
@@ -73,7 +73,7 @@ export async function fetchBacklogForWeek(
 ): Promise<LinearIssue[]> {
   const weekLabel = `week-${weekNum}`;
   const q = `
-    query($tid:String!,$label:String!){
+    query($tid:ID!,$label:String!){
       issues(
         first:200,
         filter:{
@@ -250,7 +250,7 @@ export async function planWeek(
 // ----- Morning (today) plan -----
 export async function todayPlan(): Promise<{ items: { title: string; id: string }[] }> {
   const q = `
-    query($tid:String!,$today:TimelessDate){
+    query($tid:ID!,$today:TimelessDate){
       issues(
         first:50,
         filter:{
@@ -294,7 +294,7 @@ function startOfWeekLocal(tz = process.env.PLANNER_TIMEZONE || "America/Denver")
 export async function fetchWeeklyPlan(teamId: string): Promise<WeeklyPlan> {
   const { mon, fri } = startOfWeekLocal();
   const query = `
-    query($tid:String!, $from:TimelessDate, $to:TimelessDate) {
+    query($tid:ID!, $from:TimelessDate, $to:TimelessDate) {
       issues(
         first: 200,
         filter: {
