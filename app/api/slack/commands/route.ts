@@ -72,9 +72,7 @@ export async function POST(req: NextRequest) {
     if (command === "/coach") {
       const sub = text.split(/\s+/)[0] || "";
   
-      const base = process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
-        : process.env.LOCAL_BASE_URL || "http://localhost:3000";
+      const base = new URL(req.url).origin;
       const token = process.env.SCHEDULE_TOKEN || "";
       const channel = process.env.SLACK_DEFAULT_CHANNEL_ID || "";
       const teamId = process.env.LINEAR_TEAM_ID || "";
