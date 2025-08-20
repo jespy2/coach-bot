@@ -96,79 +96,75 @@ export async function POST(req: NextRequest) {
 
 		if (sub === "plan") {
 			// 1) Fire-and-forget the heavy weekly planner that posts to the channel.
-			//    Do NOT await this, so Slack gets an immediate response.
-			fetch(`${baseUrl}/api/coach/plan`, {
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${token}`,
-					"Content-Type": "application/json",
-				},
-				body: JSON.stringify({ postToSlack: true }),
-			}).catch((e) => console.error("planner call failed", e));
+    fetch(`${baseUrl}/api/coach/plan`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ postToSlack: true }),
+    }).catch((e) => console.error("planner call failed", e));
 
-			// 2) Try to give the user *useful inline content* right away:
-			//    a fast "today" preview with a 1.8s timeout safeguard.
-			const timeout = (ms: number) =>
-				new Promise<null>((_, reject) =>
-					setTimeout(() => reject(new Error("timeout")), ms)
-				);
+    // 2) Build a SAFE preview for the ephemeral response
+    const MAX_ITEMS = 12;      // prevent too-long lists
+    const MAX_TEXT = 2700;     // keep under Slack's ~3k char limit for section text
 
-			let blocks: any[] | null = null;
-			try {
-				const { fetchTodayTasks } = await import("@/lib/linear");
-				const issues = (await Promise.race([
-					fetchTodayTasks(teamId),
-					timeout(1800),
-				])) as { id: string; title: string; url?: string }[];
+    // small helper to trim safely for Slack
+    const trimForSlack = (s: string, max = MAX_TEXT) =>
+      s.length <= max ? s : s.slice(0, max - 20) + " …";
 
-				const list =
-					issues && issues.length
-						? issues
-								.map(
-									(i, idx) =>
-										`:white_large_square: *${idx + 1}.* <${i.url ?? "#"}|${
-											i.title
-										}>`
-								)
-								.join("\n")
-						: "_No open tasks due today_";
+    let blocks: any[] | null = null;
+    let previewText = "Planning for this week… I’ll post the full plan shortly.";
 
-				blocks = [
-					{
-						type: "header",
-						text: {
-							type: "plain_text",
-							text: "Today’s Plan (preview)",
-							emoji: true,
-						},
-					},
-					{ type: "section", text: { type: "mrkdwn", text: list } },
-					{
-						type: "context",
-						elements: [
-							{
-								type: "mrkdwn",
-								text: "I’ll post the full weekly plan to the channel shortly.",
-							},
-						],
-					},
-				];
-			} catch {
-				// If we timed out or hit an error, we'll fall back to a minimal ack below.
-			}
+    try {
+      const { fetchTodayTasks } = await import("@/lib/linear");
+      const items = await fetchTodayTasks(teamId);
 
-			// 3) Return the ephemeral response immediately (within Slack’s 3s window).
-			if (blocks) {
-				return NextResponse.json({
-					response_type: "ephemeral",
-					text: "Here’s a quick preview for today. I’ll post the full plan shortly.",
-					blocks,
-				});
-			}
-			return NextResponse.json({
-				response_type: "ephemeral",
-				text: "On it — planning now. I’ll post the weekly plan to the channel in a moment.",
-			});
+      // shape: [{ id, title, url? }, ...]
+      const shown = (items ?? []).slice(0, MAX_ITEMS);
+      const extra = Math.max(0, (items?.length ?? 0) - shown.length);
+
+      if (shown.length) {
+        const list = trimForSlack(
+          shown
+            .map((i, idx) => `• *${idx + 1}.* <${i.url ?? "#"}|${i.title}>`)
+            .join("\n")
+        );
+
+        const suffix = extra > 0 ? `\n…and *${extra}* more due today.` : "";
+
+        blocks = [
+          { type: "section", text: { type: "mrkdwn", text: `*Today (preview)*\n${list}${suffix}` } },
+        ];
+
+        previewText = extra > 0
+          ? `Here’s a quick preview for today (+${extra} more). I’ll post the full weekly plan shortly.`
+          : `Here’s a quick preview for today. I’ll post the full weekly plan shortly.`;
+      } else {
+        blocks = [
+          { type: "section", text: { type: "mrkdwn", text: "_No open tasks due today._\nI’ll post the weekly plan shortly." } },
+        ];
+        previewText = "No open tasks due today. I’ll post the weekly plan shortly.";
+      }
+    } catch (e) {
+      // If preview fails, we still ACK fast below
+      console.error("preview build failed", e);
+      blocks = null;
+      previewText = "On it — planning now. I’ll post the weekly plan shortly.";
+    }
+
+    // 3) Immediate ephemeral reply (valid shape, safe size)
+    if (blocks) {
+      return NextResponse.json({
+        response_type: "ephemeral",
+        text: previewText,      // fallback text for clients without blocks
+        blocks,
+      });
+    }
+    return NextResponse.json({
+      response_type: "ephemeral",
+      text: previewText,
+    });
 		}
 
 		if (sub === "today") {
