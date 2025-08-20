@@ -8,15 +8,18 @@ export type LinearIssue = {
   url?: string;
 };
 
+type PageInfo = { hasNextPage: boolean; endCursor: string | null };
+type IssuesResp = { issues: { pageInfo: PageInfo; nodes: any[] } };
+
 // ===== Env / Config =====
 const API = "https://api.linear.app/graphql";
 const KEY = process.env.LINEAR_API_KEY || "";
 
-// Timezone (use your repo’s env key)
+// Timezone from your repo’s env key
 const TZ = process.env.PLANNER_TIMEZONE || "America/Denver";
 
 // Program schedule
-// Week 1 starts on this Wednesday (e.g. 2025-08-20); Weeks 2+ start on each Monday after that.
+// Week 1 starts on this Wednesday; Weeks 2+ start on each Monday after that.
 const WED_START = process.env.PROGRAM_START_DATE || "2025-08-20";
 
 // ===== Date Helpers =====
@@ -155,7 +158,7 @@ export async function fetchTodayTasks(teamId: string): Promise<LinearIssue[]> {
   let after: string | null = null;
 
   do {
-    const d = await gql(qIssues, { tid: teamId, today, after });
+    const d: IssuesResp = await gql<IssuesResp>(qIssues, { tid: teamId, today, after });
     const nodes = d?.issues?.nodes ?? [];
 
     for (const n of nodes) {
