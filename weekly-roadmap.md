@@ -1,3 +1,4 @@
+
 # Weekly Roadmap (Weeks 1–16)
 
 > **Week boundaries**
@@ -32,3 +33,86 @@
 - `effort:L` — k8s/helm/terraform/deploy/production/exam, and all **week 8** capstone work (≈4–6h)
 
 > You can manually pin any issue by adding a `week-N` label. Re-runs with `RESPECT_EXISTING_WEEK=1` will honor your pin.
+
+---
+
+## Week 1 — TypeScript & JS Review
+
+- AID-001: Learn the difference between `any` and `unknown`
+- AID-002: Use generics to enforce type safety in a React form
+- AID-003: Practice narrowing types with `in`, `typeof`, and `instanceof`
+
+## Week 2 — Next.js Deep Dive
+
+- AID-014: Understand file-based routing
+- AID-015: Add `getStaticProps` to pre-render content
+
+## Week 3 — Recharts & Visualization Foundations
+
+- AID-022: Create a bar chart using Recharts
+- AID-023: Customize Recharts tooltips
+
+## Week 4 — GitHub Actions & Pipelines
+
+- AID-031: Trigger CI on pull requests
+- AID-032: Cache dependencies across jobs
+
+## Week 5 — AWS Basics
+
+- AID-040: Deploy static assets to S3
+- AID-041: Configure CloudFront distribution
+
+## Week 6 — AI / Prompt / LLM Fundamentals
+
+- AID-051: Define prompt engineering principles
+- AID-052: Token limits and model context size
+
+## Week 7 — Terraform & IaC
+
+- AID-060: Provision an S3 bucket with Terraform
+- AID-061: Use variables and outputs effectively
+
+## Week 8 — Capstone Completion & Polishing
+
+- AID-070: Finalize capstone UI
+- AID-071: Improve accessibility and UX
+
+## Week 9 — Jenkins Pipelines
+
+- AID-081: Configure Jenkinsfile for CI
+- AID-082: Trigger builds from GitHub
+
+## Week 10 — GitHub Actions Advanced
+
+- AID-090: Use reusable workflows
+- AID-091: Manage secrets securely
+
+## Week 11 — Kubernetes Intro
+
+- AID-100: Write a basic pod manifest
+- AID-101: Explain the role of kubelet
+
+## Week 12 — Helm, Scaling, Deployments
+
+- AID-110: Write a simple Helm chart
+- AID-111: Set up autoscaling in k8s
+
+## Week 13 — AWS Certification Study
+
+- AID-120: Review SAA-C03 objectives
+- AID-121: Simulate exam questions
+
+## Week 14 — Terraform Certification Study
+
+- AID-130: HashiCorp Certified: Terraform Associate review
+- AID-131: Common exam gotchas
+
+## Week 15 — Jenkins/GHA Certification Study
+
+- AID-140: Study Jenkins certification domains
+- AID-141: Compare Jenkins and GHA usage
+
+## Week 16 — Review & Wrap-up
+
+- AID-150: Write project retrospective
+- AID-151: Create presentation slides

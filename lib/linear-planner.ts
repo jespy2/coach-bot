@@ -12,6 +12,23 @@ const TEAM  = process.env.LINEAR_TEAM_ID!;
 const TZ    = process.env.PLANNER_TIMEZONE || "America/Denver";
 const CAP   = Math.max(1, Number(process.env.PLANNER_CAPACITY_PER_DAY || "3"));
 
+function getWeekStartDates(startDateISO: string, count: number): string[] {
+  const dates = [];
+  const start = new Date(startDateISO + "T00:00:00Z");
+  const dow = start.getUTCDay();
+
+  // Week 1 starts on Wednesday
+  let current = new Date(start);
+  dates.push(toISO(current));
+
+  // Week 2+ start on Monday
+  while (dates.length < count) {
+    current.setUTCDate(current.getUTCDate() + (8 - current.getUTCDay()) % 7 || 7);
+    dates.push(toISO(current));
+  }
+  return dates;
+}
+
 const PROGRAM_START = process.env.PROGRAM_START_DATE!; // e.g. "2025-08-20"
 const BLACKOUTS = (process.env.BLACKOUT_WEEKS || "")
   .split(",").map(s=>s.trim()).filter(Boolean).sort();
@@ -396,4 +413,38 @@ export async function fetchTodayChecklist(){
   // Sort for nicer reading
   out.sort((a,b)=> a.title.localeCompare(b.title));
   return out;
+}
+
+
+
+async function planIssues(issues: any[]) {
+  const weeks = getWeekStartDates(PROGRAM_START, 16);
+  const weekBuckets: Record<string, any[]> = {};
+  const stretch: any[] = [];
+
+  for (let i = 0; i < 16; i++) {
+    weekBuckets[`week-${i + 1}`] = [];
+  }
+
+  for (const issue of issues) {
+    const text = `${issue.title} ${issue.description}`.toLowerCase();
+    const isStretch = /jenkins|github actions|gha/.test(text);
+    if (isStretch) {
+      issue.labels = ["stretch"];
+      issue.dueDate = null;
+      continue;
+    }
+
+    for (let i = 0; i < 16; i++) {
+      const label = `week-${i + 1}`;
+      if (weekBuckets[label].length < 10 || (label === "week-15" && weekBuckets[label].length < 20)) {
+        issue.labels = [label];
+        issue.dueDate = weeks[i];
+        weekBuckets[label].push(issue);
+        break;
+      }
+    }
+  }
+
+  return issues;
 }
