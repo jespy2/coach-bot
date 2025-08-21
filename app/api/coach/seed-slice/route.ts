@@ -7,7 +7,6 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
-  // Auth
   const auth = req.headers.get("authorization") || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   if (!token || token !== (process.env.SCHEDULE_TOKEN || "")) {
@@ -16,7 +15,7 @@ export async function POST(req: NextRequest) {
 
   const url = new URL(req.url);
   const offset = Number(url.searchParams.get("offset") || "0");
-  const limit  = Number(url.searchParams.get("limit")  || "60"); // default batch size
+  const limit  = Number(url.searchParams.get("limit")  || "12"); // small default
 
   const mdPath = path.join(process.cwd(), "weekly-roadmap.md");
   const md = await fs.readFile(mdPath, "utf8");

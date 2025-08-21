@@ -365,14 +365,10 @@ export async function importFromRoadmap(
   const weeks = getWeekStartDates(PROGRAM_START, 16);
 
   const parsed = parseRoadmapMarkdown(md);
-
-  async function labelId(name: string) {
-    return await getOrCreateLabelId(TEAM, TEAM, name);
-  }
-
   const tzToday = todayISO(TZ);
   const tzTomorrow = addDaysISO(tzToday, 1);
 
+  // Order: today/tomorrow first so /today is immediately useful
   const ordered = todayFirst
     ? [...parsed.filter(t => t.today || t.tomorrow), ...parsed.filter(t => !t.today && !t.tomorrow)]
     : parsed;
@@ -380,10 +376,29 @@ export async function importFromRoadmap(
   const total = ordered.length;
   const slice = ordered.slice(offset, Math.min(offset + limit, total));
 
-  // cap per-week: at create time we keep to <=10 (week 15 up to 20); planner will enforce too
-  const weekCounts: Record<number, number> = {};
+  // ---------- PREWARM LABEL IDS (do once per slice) ----------
+  const labelCache = new Map<string, string>();
+  async function idFor(name: string) {
+    if (labelCache.has(name)) return labelCache.get(name)!;
+    const id = await getOrCreateLabelId(TEAM, TEAM, name);
+    labelCache.set(name, id);
+    return id;
+  }
 
+  // Precompute label names we’ll need for this slice
+  const needed = new Set<string>(["today", "tomorrow", "phase-1", "phase-2"]);
+  for (const t of slice) {
+    if (t.week && t.week >= 1 && t.week <= 16) {
+      needed.add(`week-${t.week}`);
+    }
+  }
+  // Resolve all needed labels once
+  for (const n of needed) await idFor(n);
+
+  // Cap per-week at creation time too (planner will also enforce later)
+  const weekCounts: Record<number, number> = {};
   let imported = 0;
+
   for (const t of slice) {
     let dueDate: string | null = null;
     let labelNames: string[] = [];
@@ -402,36 +417,33 @@ export async function importFromRoadmap(
       const max = wk === 15 ? 20 : 10;
       weekCounts[wk] = (weekCounts[wk] || 0);
       if (weekCounts[wk] >= max) {
-        // overflow: import without a week label so planner can push to stretch later if needed
+        // Overflow: create without week label; planner will push to stretch later if needed
         stateId = backlog?.id ?? null;
       } else {
-        const wkLabel = `week-${wk}`;
-        labelNames.push(wkLabel, phaseFromWeek(wk));
+        labelNames.push(`week-${wk}`, phaseFromWeek(wk));
         dueDate = weeks[wk - 1]; // start of that week
         weekCounts[wk]++;
       }
-    } else {
-      stateId = backlog?.id ?? null;
     }
 
-    const ids: string[] = [];
-    for (const n of labelNames) ids.push(await labelId(n));
+    const labelIds = labelNames.length ? await Promise.all(labelNames.map(n => idFor(n))) : undefined;
 
     await createIssue({
       teamId: TEAM,
       title: t.title,
       description: t.body,
-      labelIds: ids.length ? ids : undefined,
+      labelIds,
       stateId,
       dueDate: dueDate ?? undefined,
     });
 
     imported++;
-    await sleep(35); // keep under API limits; reduce if needed
+    await sleep(10); // keep it tiny; label fetches are cached above
   }
 
   return { imported, total, nextOffset: Math.min(offset + slice.length, total) };
 }
+
 
 
 // ---------- Public planner ops used by Slack ----------
