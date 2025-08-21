@@ -357,7 +357,10 @@ function parseRoadmapMarkdown(md: string): ParsedTask[] {
 }
 
 // Create tasks from the markdown, putting [today]/[tomorrow] directly into Todo
-export async function importFromRoadmap(md: string, { todayFirst = true } = {}) {
+export async function importFromRoadmap(
+  md: string,
+  { todayFirst = true, offset = 0, limit = Number.POSITIVE_INFINITY } = {}
+) {
   const { backlog, todo } = await lookupStates(TEAM);
   const weeks = getWeekStartDates(PROGRAM_START, 16);
 
@@ -374,10 +377,14 @@ export async function importFromRoadmap(md: string, { todayFirst = true } = {}) 
     ? [...parsed.filter(t => t.today || t.tomorrow), ...parsed.filter(t => !t.today && !t.tomorrow)]
     : parsed;
 
+  const total = ordered.length;
+  const slice = ordered.slice(offset, Math.min(offset + limit, total));
+
   // cap per-week: at create time we keep to <=10 (week 15 up to 20); planner will enforce too
   const weekCounts: Record<number, number> = {};
 
-  for (const t of ordered) {
+  let imported = 0;
+  for (const t of slice) {
     let dueDate: string | null = null;
     let labelNames: string[] = [];
     let stateId: string | null = backlog?.id ?? null;
@@ -404,26 +411,28 @@ export async function importFromRoadmap(md: string, { todayFirst = true } = {}) 
         weekCounts[wk]++;
       }
     } else {
-      // if no week + not today/tomorrow, keep unlabelled in backlog
       stateId = backlog?.id ?? null;
     }
 
     const ids: string[] = [];
     for (const n of labelNames) ids.push(await labelId(n));
 
-    const desc = t.body;
     await createIssue({
       teamId: TEAM,
       title: t.title,
-      description: desc,
+      description: t.body,
       labelIds: ids.length ? ids : undefined,
       stateId,
       dueDate: dueDate ?? undefined,
     });
 
-    await sleep(60); // be nice to the API
+    imported++;
+    await sleep(35); // keep under API limits; reduce if needed
   }
+
+  return { imported, total, nextOffset: Math.min(offset + slice.length, total) };
 }
+
 
 // ---------- Public planner ops used by Slack ----------
 
