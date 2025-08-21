@@ -1,9 +1,11 @@
 // app/api/coach/plan/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { applyRoadmap, fetchWeeklyPlan } from "@/lib/linear-planner";
+import { applyRoadmap, fetchWeeklyPlan, importFromRoadmap } from "@/lib/linear-planner";
+import { promises as fs } from "fs";
+import path from "path";
 
 export const runtime = "nodejs";
-export const maxDuration = 60; // give Linear import time
+export const maxDuration = 60; // avoid Vercel edge timeout
 
 async function postBlocks(channel: string, title: string, blocks: any[]) {
   const token = process.env.SLACK_BOT_TOKEN!;
@@ -14,30 +16,37 @@ async function postBlocks(channel: string, title: string, blocks: any[]) {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json; charset=utf-8",
     },
-    body: JSON.stringify({
-      channel,
-      text: title,
-      blocks,
-    }),
+    body: JSON.stringify({ channel, text: title, blocks }),
   });
 }
 
 export async function POST(req: NextRequest) {
-  // simple bearer auth
+  // 0) Auth first so we don't do work if unauthorized
   const auth = req.headers.get("authorization") || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   if (!token || token !== (process.env.SCHEDULE_TOKEN || "")) {
-    return NextResponse.json(
-      { ok: false, error: "unauthorized" },
-      { status: 401 }
-    );
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  // if ?reset=1 then clear/reseed roadmap
-  const reset = req.nextUrl.searchParams.get("reset") === "1";
+  const url   = new URL(req.url);
+  const reset = url.searchParams.get("reset") === "1";
+  const seed  = url.searchParams.get("seed")  === "1";
+
+  let imported = 0;
+
+  // 1) Optional: import from weekly-roadmap.md (creates issues)
+  if (seed) {
+    const mdPath = path.join(process.cwd(), "weekly-roadmap.md");
+    const md = await fs.readFile(mdPath, "utf8");
+    await importFromRoadmap(md); // today/tomorrow -> Todo; weekly -> week-N + due start-of-week
+    // We don't have a count returned from importFromRoadmap; if you want, you can modify it to return one.
+    imported = 1; // signal that we seeded (for debugging/reporting)
+  }
+
+  // 2) Apply roadmap rules: week caps, due dates, stretch, templates, etc.
   await applyRoadmap({ reset });
 
-  // fetch weekly grouped issues for Slack
+  // 3) Build weekly view for Slack
   const weekly = await fetchWeeklyPlan();
   const days = Object.keys(weekly).sort();
   const lines = days.length
@@ -48,24 +57,16 @@ export async function POST(req: NextRequest) {
     : ["_No issues scheduled this week_"];
 
   const blocks = [
-    {
-      type: "header",
-      text: { type: "plain_text", text: "Sprint Plan (This Week)", emoji: true },
-    },
+    { type: "header", text: { type: "plain_text", text: "Sprint Plan (This Week)", emoji: true } },
     { type: "section", text: { type: "mrkdwn", text: lines.join("\n") } },
-    {
-      type: "context",
-      elements: [
-        { type: "mrkdwn", text: "Use `/coach today` for today’s checklist." },
-      ],
-    },
+    { type: "context", elements: [{ type: "mrkdwn", text: "Use `/today` for today’s checklist." }] },
   ];
 
-  // post to default Slack channel if configured
+  // 4) Post to default Slack channel (optional)
   const channel = process.env.SLACK_DEFAULT_CHANNEL_ID || "";
   if (channel) {
     await postBlocks(channel, "Sprint Plan (This Week)", blocks);
   }
 
-  return NextResponse.json({ ok: true, blocks });
+  return NextResponse.json({ ok: true, imported, blocks });
 }
