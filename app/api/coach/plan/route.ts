@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { applyRoadmap, fetchWeeklyPlan } from "@/lib/linear-planner";
 
 export const runtime = "nodejs";
+export const maxDuration = 60; // <— avoid timeout on Vercel edge
 
 async function postBlocks(channel:string, title:string, blocks:any[]){
   const token = process.env.SLACK_BOT_TOKEN!;
@@ -17,6 +18,8 @@ async function postBlocks(channel:string, title:string, blocks:any[]){
 }
 
 export async function POST(req: NextRequest) {
+  const reset = req.nextUrl.searchParams.get("reset") === "1";
+  await applyRoadmap({ reset }); // pass reset into planner
   // simple bearer auth
   const auth = req.headers.get("authorization") || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
