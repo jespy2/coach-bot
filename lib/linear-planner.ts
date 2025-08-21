@@ -1,5 +1,5 @@
 // lib/linear-planner.ts
-// Roadmap planner used by Slack routes (/coach plan, /coach today) and CLI.
+// Roadmap planner + importer used by Slack routes (/coach plan, /today) and CLI.
 //
 // Week 1: PROGRAM_START_DATE (Wednesday, e.g. 2025-08-20)
 // Weeks 2+: Monday cadence
@@ -12,24 +12,7 @@ const TEAM  = process.env.LINEAR_TEAM_ID!;
 const TZ    = process.env.PLANNER_TIMEZONE || "America/Denver";
 const CAP   = Math.max(1, Number(process.env.PLANNER_CAPACITY_PER_DAY || "3"));
 
-function getWeekStartDates(startDateISO: string, count: number): string[] {
-  const dates = [];
-  const start = new Date(startDateISO + "T00:00:00Z");
-  const dow = start.getUTCDay();
-
-  // Week 1 starts on Wednesday
-  let current = new Date(start);
-  dates.push(toISO(current));
-
-  // Week 2+ start on Monday
-  while (dates.length < count) {
-    current.setUTCDate(current.getUTCDate() + (8 - current.getUTCDay()) % 7 || 7);
-    dates.push(toISO(current));
-  }
-  return dates;
-}
-
-const PROGRAM_START = process.env.PROGRAM_START_DATE!; // e.g. "2025-08-20"
+const PROGRAM_START = process.env.PROGRAM_START_DATE!; // e.g. "2025-08-25"
 const BLACKOUTS = (process.env.BLACKOUT_WEEKS || "")
   .split(",").map(s=>s.trim()).filter(Boolean).sort();
 
@@ -89,6 +72,22 @@ export function windowForWeek(w:number){
   const start = startOfWeekN(w);
   const end   = addDaysISO(start, 6);
   return { start, end };
+}
+
+function getWeekStartDates(startDateISO: string, count: number): string[] {
+  const dates = [];
+  const start = new Date(startDateISO + "T00:00:00Z");
+
+  // Week 1 starts on given date (Wed)
+  let current = new Date(start);
+  dates.push(toISO(current));
+
+  // Week 2+ start on Monday
+  while (dates.length < count) {
+    current.setUTCDate(current.getUTCDate() + (8 - current.getUTCDay()) % 7 || 7);
+    dates.push(toISO(current));
+  }
+  return dates;
 }
 
 function phaseFromWeek(w:number){
@@ -216,7 +215,7 @@ type StatesPage = {
 type UpdateIssueResp = { issueUpdate: { success: boolean } };
 type CreateLabelResp = { issueLabelCreate: { issueLabel: { id: string } } };
 
-// ---------- Linear mini-API (correct ID!/String! usage) ----------
+// ---------- Linear mini-API ----------
 export async function* listIssues(teamIdID: string, pageSize = 200){
   let after: string | null = null;
   while (true) {
@@ -287,33 +286,200 @@ async function updateIssue(id:string, input: Record<string, any>){
   return res.issueUpdate?.success;
 }
 
+// Create a new issue
+async function createIssue(input: {
+  teamId: string;
+  title: string;
+  description?: string;
+  labelIds?: string[];
+  stateId?: string | null;
+  dueDate?: string | null; // YYYY-MM-DD (TimelessDate)
+}) {
+  const m = `mutation($input: IssueCreateInput!) {
+    issueCreate(input: $input) { issue { id identifier title url } }
+  }`;
+  const res = await gql(m, { input });
+  return res?.issueCreate?.issue as { id:string; identifier:string; title:string; url?:string|null } | null;
+}
+
+// ---------- Markdown importer ----------
+type ParsedTask = {
+  week: number | null;         // null for explicit today/tomorrow-only items
+  title: string;
+  body: string;
+  today: boolean;
+  tomorrow: boolean;
+};
+
+function parseRoadmapMarkdown(md: string): ParsedTask[] {
+  const lines = md.split(/\r?\n/);
+  const tasks: ParsedTask[] = [];
+  let currentWeek: number | null = null;
+  let buffer: string[] = [];
+  let inTask = false;
+
+  function flush() {
+    if (!inTask) return;
+    const body = buffer.join("\n").trim();
+    const firstLine = body.split("\n")[0] || "";
+    const title = firstLine.replace(/^###\s*/, "").trim();
+
+    const low = body.toLowerCase();
+    const today = /\b\[?today\]?\b/.test(low) || /\(today\)/.test(low);
+    const tomorrow = /\b\[?tomorrow\]?\b/.test(low) || /\(tomorrow\)/.test(low);
+
+    tasks.push({ week: currentWeek, title, body, today, tomorrow });
+    buffer = [];
+    inTask = false;
+  }
+
+  for (const raw of lines) {
+    const line = raw.trimRight();
+
+    const wk = line.match(/^##\s*Week\s*(\d+)\b/i);
+    if (wk) {
+      flush();
+      currentWeek = Number(wk[1]);
+      continue;
+    }
+
+    if (/^###\s+/.test(line)) {
+      flush();
+      inTask = true;
+      buffer = [line];
+      continue;
+    }
+
+    if (inTask) buffer.push(line);
+  }
+  flush();
+  return tasks;
+}
+
+// Create tasks from the markdown, putting [today]/[tomorrow] directly into Todo
+export async function importFromRoadmap(md: string, { todayFirst = true } = {}) {
+  const { backlog, todo } = await lookupStates(TEAM);
+  const weeks = getWeekStartDates(PROGRAM_START, 16);
+
+  const parsed = parseRoadmapMarkdown(md);
+
+  async function labelId(name: string) {
+    return await getOrCreateLabelId(TEAM, TEAM, name);
+  }
+
+  const tzToday = todayISO(TZ);
+  const tzTomorrow = addDaysISO(tzToday, 1);
+
+  const ordered = todayFirst
+    ? [...parsed.filter(t => t.today || t.tomorrow), ...parsed.filter(t => !t.today && !t.tomorrow)]
+    : parsed;
+
+  // cap per-week: at create time we keep to <=10 (week 15 up to 20); planner will enforce too
+  const weekCounts: Record<number, number> = {};
+
+  for (const t of ordered) {
+    let dueDate: string | null = null;
+    let labelNames: string[] = [];
+    let stateId: string | null = backlog?.id ?? null;
+
+    if (t.today) {
+      dueDate = tzToday;
+      labelNames.push("today");
+      stateId = todo?.id ?? stateId;
+    } else if (t.tomorrow) {
+      dueDate = tzTomorrow;
+      labelNames.push("tomorrow");
+      stateId = todo?.id ?? stateId;
+    } else if (typeof t.week === "number" && t.week >= 1 && t.week <= 16) {
+      const wk = t.week;
+      const max = wk === 15 ? 20 : 10;
+      weekCounts[wk] = (weekCounts[wk] || 0);
+      if (weekCounts[wk] >= max) {
+        // overflow: import without a week label so planner can push to stretch later if needed
+        stateId = backlog?.id ?? null;
+      } else {
+        const wkLabel = `week-${wk}`;
+        labelNames.push(wkLabel, phaseFromWeek(wk));
+        dueDate = weeks[wk - 1]; // start of that week
+        weekCounts[wk]++;
+      }
+    } else {
+      // if no week + not today/tomorrow, keep unlabelled in backlog
+      stateId = backlog?.id ?? null;
+    }
+
+    const ids: string[] = [];
+    for (const n of labelNames) ids.push(await labelId(n));
+
+    const desc = t.body;
+    await createIssue({
+      teamId: TEAM,
+      title: t.title,
+      description: desc,
+      labelIds: ids.length ? ids : undefined,
+      stateId,
+      dueDate: dueDate ?? undefined,
+    });
+
+    await sleep(60); // be nice to the API
+  }
+}
+
 // ---------- Public planner ops used by Slack ----------
 
 // Apply labels + dates (and optionally normalize/move-today) to ALL issues
-export async function applyRoadmap({ reset = false } = {}){
-  const teamIdID     = TEAM; // for ID! variables
-  const teamIdString = TEAM; // for String variables
+// Also enforces stretch rules and re-caps week buckets.
+// Options:
+//   reset: remove week-*/phase-* before reapplying
+//   range: [startWeek, endWeek] to process in slices (for timeout avoidance)
+export async function applyRoadmap(
+  { reset = false, range }: { reset?: boolean; range?: [number, number] } = {}
+){
+  const teamIdID     = TEAM;
+  const teamIdString = TEAM;
   const { backlog, todo } = await lookupStates(teamIdString);
-  const tzToday = todayISO(TZ);
+  const weeks = getWeekStartDates(PROGRAM_START, 16);
 
   const buckets = new Map<number, IssueNode[]>();
+  const stretch: IssueNode[] = [];
+
   for await (const it of listIssues(teamIdID)){
     const labels = it.labels?.nodes || [];
-    const wk = weekFromExistingLabel(labels) ?? weekFromTitle(it.title) ?? 1;
-    if (!buckets.has(wk)) buckets.set(wk, []);
-    buckets.get(wk)!.push(it);
+    const text = `${it.title} ${it.description || ""}`.toLowerCase();
+    const isStretchy = /jenkins|github actions|gha\b/.test(text);
+    const wk = weekFromExistingLabel(labels) ?? weekFromTitle(it.title) ?? null;
+
+    if (isStretchy) {
+      stretch.push(it);
+      continue;
+    }
+    const w = wk ?? 1;
+    if (!buckets.has(w)) buckets.set(w, []);
+    buckets.get(w)!.push(it);
   }
 
-  for (const [week, arr] of [...buckets.entries()].sort((a,b)=>a[0]-b[0])){
-    arr.sort((a,b)=> rankWithinWeek(a.title) - rankWithinWeek(b.title) || a.identifier.localeCompare(b.identifier));
-    const weekStart = startOfWeekN(week);
+  const entries = [...buckets.entries()].sort((a,b)=>a[0]-b[0]);
+  const [startW, endW] = range ?? [1,16];
 
-    for (let i=0;i<arr.length;i++){
-      const it = arr[i];
+  for (const [week, arr] of entries){
+    if (week < startW || week > endW) continue;
+
+    // sort by "importance" then identifier
+    arr.sort((a,b)=> rankWithinWeek(a.title) - rankWithinWeek(b.title) || a.identifier.localeCompare(b.identifier));
+
+    const weekStart = weeks[week - 1];
+    const label = `week-${week}`;
+    const maxItems = week === 15 ? 20 : 10;
+
+    const inScope = arr.slice(0, maxItems);
+    const overflow = arr.slice(maxItems);
+    stretch.push(...overflow);
+
+    for (const it of inScope){
       const labels  = it.labels?.nodes || [];
       const have    = new Set(labels.map(l => l.name));
+      const want    = new Set<string>([label, phaseFromWeek(week), ...inferTopicLabels(it.title)]);
 
-      const want = new Set<string>([`week-${week}`, phaseFromWeek(week), ...inferTopicLabels(it.title)]);
       const hasEffort = [...have].some(n => /^effort:(S|M|L)$/i.test(n));
       if (!hasEffort) want.add("effort:M");
 
@@ -326,12 +492,11 @@ export async function applyRoadmap({ reset = false } = {}){
       for (const name of toAddNames){
         const id = await getOrCreateLabelId(teamIdID, teamIdString, name);
         addIds.push(id);
-        await sleep(25);
+        await sleep(20);
       }
 
-      // Spread work across the week by capacity (0..6)
-      const daySlot = Math.min(Math.floor(i / CAP), 6);
-      const dueISO  = addDaysISO(weekStart, daySlot);
+      // Due date = start of week (as requested)
+      const dueISO  = weekStart;
 
       const needTemplate = !it.description || !/## Goal/i.test(it.description);
       const finalDesc = needTemplate ? detailTemplateFor(it.title, [...want]) : it.description;
@@ -343,7 +508,8 @@ export async function applyRoadmap({ reset = false } = {}){
         ...(finalDesc !== it.description ? { description: finalDesc } : {}),
       });
 
-      // optional normalize + move-today
+      // Normalize states if requested (keep non-today in backlog-like)
+      const tzToday = todayISO(TZ);
       if (NORMALIZE && todo && it.state?.id === todo.id && dueISO !== tzToday && backlog){
         await updateIssue(it.id, { stateId: backlog.id });
       }
@@ -351,6 +517,29 @@ export async function applyRoadmap({ reset = false } = {}){
         await updateIssue(it.id, { stateId: todo.id });
       }
     }
+  }
+
+  // Process stretch: remove week-*, clear dueDate, add stretch label, keep in todo/backlog
+  for (const it of stretch){
+    const labels = it.labels?.nodes || [];
+    const have = new Set(labels.map(l => l.name));
+
+    const toRemoveIds = labels
+      .filter(l => /^week-\d+$/.test(l.name))
+      .map(l => l.id);
+
+    const addIds: string[] = [];
+    if (!have.has("stretch")){
+      const id = await getOrCreateLabelId(teamIdID, teamIdString, "stretch");
+      addIds.push(id);
+    }
+
+    await updateIssue(it.id, {
+      ...(addIds.length ? { addedLabelIds: addIds } : {}),
+      ...(toRemoveIds.length ? { removedLabelIds: toRemoveIds } : {}),
+      dueDate: null,
+    });
+    await sleep(15);
   }
 }
 
@@ -360,7 +549,6 @@ export async function fetchWeeklyPlan(teamIdID = TEAM){
   const all: IssueNode[] = [];
   for await (const it of listIssues(teamIdID)) all.push(it);
 
-  // Compute target week per issue and its scheduled due date
   const grouped = new Map<number, IssueNode[]>();
   for (const it of all){
     const labels = it.labels?.nodes || [];
@@ -372,6 +560,7 @@ export async function fetchWeeklyPlan(teamIdID = TEAM){
   for (const [week, arr] of [...grouped.entries()]){
     arr.sort((a,b)=> rankWithinWeek(a.title) - rankWithinWeek(b.title) || a.identifier.localeCompare(b.identifier));
     const weekStart = startOfWeekN(week);
+    // For planning display we still show a spread by CAP, even though dueDate is start-of-week
     for (let i=0;i<arr.length;i++){
       const it = arr[i];
       const daySlot = Math.min(Math.floor(i / CAP), 6);
@@ -410,41 +599,6 @@ export async function fetchTodayChecklist(){
       out.push({ id: it.id, identifier: it.identifier, title: it.title, url: it.url ?? null });
     }
   }
-  // Sort for nicer reading
   out.sort((a,b)=> a.title.localeCompare(b.title));
   return out;
-}
-
-
-
-async function planIssues(issues: any[]) {
-  const weeks = getWeekStartDates(PROGRAM_START, 16);
-  const weekBuckets: Record<string, any[]> = {};
-  const stretch: any[] = [];
-
-  for (let i = 0; i < 16; i++) {
-    weekBuckets[`week-${i + 1}`] = [];
-  }
-
-  for (const issue of issues) {
-    const text = `${issue.title} ${issue.description}`.toLowerCase();
-    const isStretch = /jenkins|github actions|gha/.test(text);
-    if (isStretch) {
-      issue.labels = ["stretch"];
-      issue.dueDate = null;
-      continue;
-    }
-
-    for (let i = 0; i < 16; i++) {
-      const label = `week-${i + 1}`;
-      if (weekBuckets[label].length < 10 || (label === "week-15" && weekBuckets[label].length < 20)) {
-        issue.labels = [label];
-        issue.dueDate = weeks[i];
-        weekBuckets[label].push(issue);
-        break;
-      }
-    }
-  }
-
-  return issues;
 }
